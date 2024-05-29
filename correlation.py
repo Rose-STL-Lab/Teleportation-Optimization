@@ -18,16 +18,13 @@ from plot import plot_correlation
 
 device = 'cpu'
 dataset = 'CIFAR10' # 'MNIST', 'FashionMNIST', 'CIFAR10'
-sigma_name = 'leakyrelu' # 'leakyrelu', 'sigmoid'
+sigma_name = 'leakyrelu' # 'leakyrelu'
+sigma = nn.LeakyReLU(0.1)
 criterion = nn.CrossEntropyLoss()
 
 num_run = 100
 total_epoch = 40
 check_epoch = 40 # compute curvature/sharpness using W_lists at this epoch.
-if sigma_name == 'leakyrelu':
-    sigma = nn.LeakyReLU(0.1)
-elif sigma_name == 'sigmoid':
-    sigma = nn.Sigmoid()
 
 # dataset and hyper-parameters
 batch_size = 20
@@ -96,6 +93,7 @@ def train_step_SGD(x_train, y_train, model, criterion, optimizer):
     return loss
 
 def run_SGD_rand(seed):
+    # run SGD with initial weights determined by seed
     W_list = init_param_MLP(dim, seed)
     loss_arr_SGD = []
     dL_dt_arr_SGD = []
@@ -173,6 +171,7 @@ for i in range(num_run):
         X = tele_data
         Y = tele_target
 
+        # curvature (Equation 5)
         M_list = []
         torch.manual_seed(12345 * curve_idx)
 
@@ -185,6 +184,7 @@ for i in range(num_run):
         curvature = compute_curvature(gamma_1_list, gamma_2_list).item()
         curvature_list.append(curvature)
         
+        # sharpness (Equation 4)
         W_list_perturb = []
         for t in np.arange(t_start, t_end, t_interval):
             random_dir = torch.rand(W_vec_all.size()[0])

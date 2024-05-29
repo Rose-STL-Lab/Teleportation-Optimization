@@ -7,6 +7,8 @@ import torch.nn.functional as F
 from curvature_utils import W_list_to_vec, vec_to_W_list, compute_curvature
 
 def init_param_MLP(dim, seed=54321):
+    # dim: list of dimensions of weight matrices. 
+    # Example: [4, 5, 6, 7, 8] -> X: 5x4, W1:6x5, W2:7x6, W3:8x7, Y:8x4
     torch.manual_seed(seed)
     W_list = []
     for i in range(len(dim) - 2):
@@ -87,9 +89,11 @@ def test_MLP(model, criterion, test_loader):
     return test_loss, np.sum(class_correct) / np.sum(class_total)
 
 
-# new group actions
+##############################################################
+# group actions
 def group_action(U, V, X, X_inv, T, sigma):
-    # U = W_m, V = W_{m-1}, X = h_{m-2}
+    # U, V -> U sigma(VX) sigma((I+T)VX)^+, (I+T)V
+
     k = list(T.size())[0]
     I = torch.eye(k)
 
@@ -102,6 +106,8 @@ def group_action(U, V, X, X_inv, T, sigma):
     return U_out, V_out
 
 def group_action_large(U, V, X, X_inv, g, g_inv, sigma):
+    # U, V -> U sigma(VX) sigma(gVX)^+, gV
+
     k = list(g.size())[0]
     I = torch.eye(k)
 
@@ -114,6 +120,8 @@ def group_action_large(U, V, X, X_inv, g, g_inv, sigma):
     return U_out, V_out
 
 def group_action_exp(t, U, V, X, X_inv, M, sigma):
+    # U, V -> U sigma(VX) sigma(exp(tM)VX)^+, exp(tM)V
+
     g = torch.linalg.matrix_exp(t * M)
     g_inv = torch.linalg.pinv(g)
 
@@ -125,6 +133,8 @@ def group_action_exp(t, U, V, X, X_inv, M, sigma):
     U_out = torch.matmul(torch.matmul(U, sigma_Wh), sigma_gWh_inv)
     return U_out, V_out
 
+##############################################################
+# first (or second) derivatives of the component of gamma corresponding to U (or V)
 def compute_gamma_1_U(t, U, V, h, h_inv, M, sigma):
     func = lambda t_: group_action_exp(t_, U, V, h, h_inv, M, sigma)[0]
     gamma_1 = torch.autograd.functional.jacobian(func, t, create_graph=True)
@@ -149,6 +159,9 @@ def compute_gamma_2_V(t, U, V, h, h_inv, M, sigma):
     gamma_2 = torch.squeeze(gamma_2)
     return gamma_2
 
+##############################################################
+# teleportation
+
 def teleport_curvature(W_list, X, Y, lr_teleport, dim, sigma, telestep=10, reverse=False):
     # reverse = True if minimizing curvature, False if maximizing curvature.
     print("before teleport", loss_multi_layer(W_list, X, Y, sigma)[0])
@@ -166,6 +179,7 @@ def teleport_curvature(W_list, X, Y, lr_teleport, dim, sigma, telestep=10, rever
         t = torch.zeros(1, requires_grad=True)
         M = torch.rand(dim[layer+2], dim[layer+2], requires_grad=True)
 
+        # compute curvature using autograd
         gamma_1_U = compute_gamma_1_U(t, W_list[1+layer], W_list[0+layer], h_list[0+layer], h_inv_list[0+layer], M, sigma)
         gamma_1_V = compute_gamma_1_V(t, W_list[1+layer], W_list[0+layer], h_list[0+layer], h_inv_list[0+layer], M, sigma)
 
@@ -183,18 +197,17 @@ def teleport_curvature(W_list, X, Y, lr_teleport, dim, sigma, telestep=10, rever
         gamma_2_list[0+layer] = gamma_2_U
         gamma_2_list[1+layer] = gamma_2_V
 
-        kappa = compute_curvature(gamma_1_list, gamma_2_list)
+        kappa = compute_curvature(gamma_1_list, gamma_2_list) # curvature
+        kappa_1 = torch.autograd.grad(kappa, inputs=t, create_graph=True)[0] # derivative of curvature
         
-        kappa_1 = torch.autograd.grad(kappa, inputs=t, create_graph=True)[0]
-        
-
+        # gradient descent/ascent on t to decrease/increase curvature
         if reverse:
             t = t - lr_teleport * kappa_1
         else:
             t = t + lr_teleport * kappa_1
-
         print(kappa, kappa_1, t)
         
+        # transform weights using the updated t
         g = torch.linalg.matrix_exp(t * M)
         g_inv = torch.linalg.pinv(g) 
         W_list[1+layer], W_list[0+layer] = group_action_exp(t, W_list[1+layer], W_list[0+layer], h_list[0+layer], h_inv_list[0+layer], M, sigma)
@@ -214,6 +227,7 @@ def teleport_curvature(W_list, X, Y, lr_teleport, dim, sigma, telestep=10, rever
 def teleport_sharpness(W_list, X, Y, lr_teleport, dim, sigma, telestep=10, loss_perturb_cap=2.0, reverse=False, \
     t_start=0.001, t_end=0.2, t_interval=0.001):
     # reverse = True if minimizing sharpness, False if maximizing sharpness.
+
     X_inv = torch.linalg.pinv(X)
     h_list = [X]
     h_inv_list = [X_inv]
@@ -224,11 +238,14 @@ def teleport_sharpness(W_list, X, Y, lr_teleport, dim, sigma, telestep=10, loss_
 
     for teleport_step in range(telestep):
         gW_list = W_list.copy()
-        T = []
+        T = [] # list of elements of Lie algebras
+
+        # initialize T[i] = 0 and g.W = (I+T).W
         for m in range(0, len(gW_list)-1):
             T.append(torch.zeros(dim[m+2], dim[m+2], requires_grad=True))
             gW_list[m+1], gW_list[m] = group_action(gW_list[m+1], gW_list[m], h_list[m], h_inv_list[m], T[m], sigma)
 
+        # compute sharpness (loss_perturb_mean)
         num_t = len(np.arange(0.1, 5.0, 0.5))
         num_d = 100
         loss_perturb_mean = 0.0
@@ -245,6 +262,7 @@ def teleport_sharpness(W_list, X, Y, lr_teleport, dim, sigma, telestep=10, loss_
         if loss_perturb_mean > loss_perturb_cap:
             break
 
+        # gradient descent/ascent on T to decrease/increase sharpness (loss_perturb_mean)
         dLdt_dT_list = torch.autograd.grad(loss_perturb_mean, inputs=T, create_graph=True)
         for i in range(len(T)):
             if reverse:
@@ -252,10 +270,11 @@ def teleport_sharpness(W_list, X, Y, lr_teleport, dim, sigma, telestep=10, loss_
             else:
                 T[i] = T[i] + lr_teleport * dLdt_dT_list[i]
 
+        # transform weights using the updated T
         for m in range(0, len(W_list)-1):
             W_list[m+1], W_list[m] = group_action(W_list[m+1], W_list[m], h_list[m], h_inv_list[m], T[m], sigma)
 
-
+        # update the list of hidden representations h_list
         for m in range(1, len(h_list)):
             k = list(T[m-1].size())[0]
             I = torch.eye(k)
@@ -287,23 +306,26 @@ def teleport(W_list, X, Y, lr_teleport, dim, sigma, telestep=10, dL_dt_cap=100, 
 
 
     for teleport_step in range(telestep):
+        # populate gW_list with T.W, where T=I
         gW_list = W_list.copy()
         T = []
         for m in range(0, len(gW_list)-1):
             T.append(torch.zeros(dim[m+2], dim[m+2], requires_grad=True))
             gW_list[m+1], gW_list[m] = group_action(gW_list[m+1], gW_list[m], h_list[m], h_inv_list[m], T[m], sigma)
 
+        # compute L(T.W) and dL/d(T.W)
         L, _ = loss_multi_layer(gW_list, X, Y, sigma)
-
         dL_dW_list = torch.autograd.grad(L, inputs=gW_list, create_graph=True)
+
+        # compute dL/dt=||dL/d(T.W)||^2 and d/dT dL/dt
         dL_dt = 0
         for i in range(len(gW_list)):
             dL_dt += torch.norm(dL_dW_list[i])**2 
 
-        # print(dL_dt.detach().numpy(), L.detach().numpy(), dL_dt.detach().numpy() > dL_dt_cap)
         if dL_dt.detach().numpy() > dL_dt_cap:
             break
 
+        # gradient ascent step on T, in the direction of d/dT dL/dt
         dLdt_dT_list = torch.autograd.grad(dL_dt, inputs=T)
         for i in range(len(T)):
             if reverse:
@@ -311,6 +333,7 @@ def teleport(W_list, X, Y, lr_teleport, dim, sigma, telestep=10, dL_dt_cap=100, 
             else:
                 T[i] = T[i] + lr_teleport * dLdt_dT_list[i]
 
+        # replace original W's with T.W, using the new T's
         for m in range(0, len(W_list)-1):
             W_list[m+1], W_list[m] = group_action(W_list[m+1], W_list[m], h_list[m], h_inv_list[m], T[m], sigma)
 

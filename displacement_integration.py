@@ -25,7 +25,7 @@ for r in [2e0, 1e0, 5e-1, 2e-1, 1e-1]:
     k = np.arange(0, 40, 0.3)
     int_dist = np.zeros_like(k)
     for i in range(len(int_dist)):
-        # construct gamma
+        # construct gamma, which is a parabola here
         x_arr = np.arange(-10, 10, 0.1)
         y_arr = k[i] * np.abs(x_arr**2)
 
@@ -48,7 +48,7 @@ plt.legend(fontsize=20)
 plt.savefig('figures/curvature_displacement_integral_kx_sqr.pdf', dpi=400, bbox_inches='tight')
 
 
-# gamma: x^2 + y^2 = k^2
+# gamma: x^2 + (y-k)^2 = k^2
 plt.figure()
 plt.rcParams["axes.prop_cycle"] = plt.cycler("color", colors)
 for r in [1e-1, 5e-2, 2e-2, 1e-2, 5e-3]:

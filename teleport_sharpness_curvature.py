@@ -136,7 +136,7 @@ elif dataset == 'MNIST':
 start_epoch = 15 # use saved weights from the SGD run
 end_epoch = 40
 
-for objective in objective_list: 
+for objective in objective_list: #  sharpness or curvature
     for reverse in [False, True]: # teleport to increase or decrease sharpness/curvature
         for run_num in range(5):
             loss_arr_teleport_rand_curvature = []
@@ -165,6 +165,7 @@ for objective in objective_list:
                     batch_size = data.shape[0]
                     data = torch.t(data.view(batch_size, -1))
                     if (epoch == 20 and teleport_count < 10):# 5 for mnist, fashion
+                        # teleport
                         teleport_count += 1
                         W_list = model.get_W_list()
 

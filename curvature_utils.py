@@ -8,16 +8,19 @@ sigma = nn.LeakyReLU(0.1)
 sigma_inv = nn.LeakyReLU(10)
 
 def sigma_1(x):
+    # first derivative of sigma (LeakyReLU)
     x[x > 0] = 1.0
     x[x < 0] = 0.1
     return x
 
 def sigma_inv_1(x):
+    # first derivative of sigma^{-1} (LeakyReLU)
     x[x > 0] = 1.0
     x[x < 0] = 10.0
     return x
 
 def W_list_to_vec(W_list):
+    # Flatten and concatenate all weight matrices to a vector.
     W_vec_all = torch.flatten(W_list[0])
     for i in range(1, len(W_list)):
         W_vec = torch.flatten(W_list[i])
@@ -25,6 +28,8 @@ def W_list_to_vec(W_list):
     return W_vec_all
 
 def vec_to_W_list(W_vec_all, dim):
+    # Reshape vectorized weight to matrices.
+    # dim: list of dimensions of weight matrices. Example: [4, 5, 6, 7, 8] -> X: 5x4, W1:6x5, W2:7x6, W3:8x7, Y:8x4 
     W_list = []
     start_idx = 0
     for i in range(len(dim)-2):
@@ -34,7 +39,7 @@ def vec_to_W_list(W_vec_all, dim):
     return W_list
 
 def compute_curvature(gamma_1_list, gamma_2_list):
-    """Compute curvature of gamma from its first and second derivatives.
+    """Compute curvature of gamma from its first and second derivatives. (Equation (47) in paper)
 
     Args:
         gamma_1_list: First derivative of curve gamma(t), d gamma / dt.
@@ -54,6 +59,7 @@ def compute_curvature(gamma_1_list, gamma_2_list):
 
 def compute_gamma_12(M_list, W_list, X):
     """Compute the first and second derivatives of curve gamma(t).
+    See Equation (57) and (60) in paper. Note that the second derivative of leaky ReLU is 0.
 
     Args:
         M_list: List of Lie algebras (random square matrices).
